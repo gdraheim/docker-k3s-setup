@@ -14,11 +14,13 @@ it does not kill the docker containers started by k3s. So we have
 added a script docker-stop-k3s which gets called automatically
 via ExecStopPost
 
-# Directly using k3s as a non-root user
+# Directly using kubectl as a non-root user
 
-The default chmod bits for /etc/rancher/k3s/k3s.yaml are 0400.
+When installing kubectl via k3s it has a default KUBECONFIG
+being set to `/etc/rancher/k3s/k3s.yaml`. However the chmod
+bits for that file are `0400`, so users can not access it.
 
-Instead "k3s server" should get --write-kubeconfig-mode=0640
+Instead "k3s server" may get --write-kubeconfig-mode=0640
 
 But even this is not working all the time, so some ExecStartPost are added
 
@@ -54,3 +56,20 @@ that metallb gets run before nginx. That's why there are two files here:
     manifests/setup-10-metallb-system.yaml
     manifests/setup-20-ingress-nginx.yaml
 
+# Some kube trickts
+
+There is an additional file `kube` being installed into local/bin
+
+This is a wrapper around kubectl and helm/helmfile plus a few tricks.
+
+* run finalizers of a namespace of pvc ("kube fin ns" and "kube fin pvc")
+  - this is being used when a "kube del ns" is blocked somehow
+* exec a command in a container as root user ("kube root -it <podname> ...")
+  - this works for both docker and container backend
+* and just find the container names ("kube get con" or "kube con -A")
+  - just a thin wrapper around get-pod-yaml
+* find and update ip addresses ("kube get ip" and "kube get ipp")
+  - ipp writes /etc/hosts but the service name must be there already
+* find and del volumes by namespace ("kube get vol" and "kube del vol")
+  - volume is a "pv" but the pv-list is not global anymore
+* shorthand "kube chart" for "kube helm search repo"
