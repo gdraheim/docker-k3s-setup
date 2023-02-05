@@ -1,0 +1,212 @@
+#! /bin/bash
+namespaces=("-n" "local")
+command=""
+verbose=""
+
+K3S=/etc/rancher/k3s/k3s.yaml
+if [ "$#" = 0 ]; then
+   echo "export KUBECONFIG=$K3S"
+   exit 0
+fi
+
+case "$1" in -x) shift; set -x;; esac
+case "$1" in -v) shift; verbose="-v";; esac
+case "$1" in -x) shift; set -x;; esac
+
+case "$1"
+  in df|def|default) namespaces=("-n" "default"); shift
+  ;; lo|loc|local) namespaces=("-n" "local"); shift
+  ;; -A|--all|--all-namespaces|all) namespaces=("-A"); shift
+  ;; -n|--namespaces) shift; namespaces=("-n" "$1"); shift
+  ;; esac
+
+case "$1" in -x) shift; set -x;; esac
+case "$1" in -v) shift; verbose="-v";; esac
+case "$1" in -x) shift; set -x;; esac
+case "$1" in -n) shift; namespaces=("-n" "$1"); shift ;; esac
+case "$1" in -A) shift; namespaces=("-A") ;; esac
+case "$1" in -x) shift; set -x;; esac
+case "$1" in -v) shift; verbose="-v";; esac
+case "$1" in -x) shift; set -x;; esac
+
+case "$1"
+  in ns) command="get"
+  ;; api*) command="get"
+  ;; pod|pods) command="get"
+  ;; pvc|pvcs) command="get"
+  ;; ing|ings|ingress) command="get"
+  ;; *) command="$1" ; shift
+  ;; esac
+
+case "$1" in -x) shift; set -x;; esac
+case "$1" in -v) shift; verbose="-v";; esac
+case "$1" in -x) shift; set -x;; esac
+case "$1" in -n) shift; namespaces=("-n" "$1"); shift ;; esac
+case "$1" in -A) shift; namespaces=("-A") ;; esac
+case "$1" in -x) shift; set -x;; esac
+case "$1" in -v) shift; verbose="-v";; esac
+case "$1" in -x) shift; set -x;; esac
+
+########### helpers 
+# https://stackoverflow.com/questions/52369247/namespace-stuck-as-terminating-how-i-removed-it
+
+get_any() {
+  kubectl api-resources --verbs=list --namespaced -o name \
+  | xargs -n 1 kubectl get --show-kind --ignore-not-found "${namespaces[@]}"
+}
+
+finalize_ns() {
+  if test :-A = ":${namespaces[0]}"; then
+     echo "ERROR: can not finalize all namespaces" >&1; exit 1
+  fi
+  namespace="${namespaces[1]}"
+  kubectl get namespace $namespace -o json \
+  | tr -d "\n" | sed "s/\"finalizers\": \[[^]]\+\]/\"finalizers\": []/" \
+  | kubectl replace --raw /api/v1/namespaces/$namespace/finalize -f -
+}
+
+# https://veducate.co.uk/kubernetes-pvc-terminating/
+finalize_pvc() {
+  kubectl get pvc "${namespaces[@]}" \
+    -o "jsonpath={range .items[*]}{.metadata.namespace}{' '}{.metadata.name}{'\n'}{end}" | { 
+    while read namespace pvc stuff; do
+        kubectl get pvc "${namespaces[@]}" $pvc -o json \
+        | tr -d "\n" | sed "s/\"finalizers\": \[[^]]\+\]/\"finalizers\": []/" \
+        | kubectl replace --raw /api/v1/namespaces/$namespace/persistentvolumeclaims/$pvc -f -
+    done ; }
+}
+
+get_container() {
+  case ":$1"
+     in :pod) pods=("$@")
+     ;; :pod/*) pods=("$@")
+     ;; :) pods=("pod")
+     ;; *) pods=("pod" "$@")
+  ;; esac
+  if test ":${namespaces[0]}" = ":-A" ; then
+    test -n "$verbose" && set -x
+    kubectl get "${namespaces[@]}" "${pods[@]}" -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,CONTAINER:.status.containerStatuses[0].containerID
+  else
+    test -n "$verbose" && set -x
+    kubectl get "${namespaces[@]}" "${pods[@]}" -o custom-columns=NAME:.metadata.name,CONTAINER:.status.containerStatuses[0].containerID
+  fi
+}
+
+exec_root() {
+  local args=()
+  while [[ "$#" -gt 1 ]]; do
+    case ":$1"
+      in :pod) shift; continue
+      ;; :-*) args=("${args[@]}" "$1"); shift; continue
+      ;; *) pod="$1"; shift
+         local found=$(kubectl get "${namespaces[@]}" pod "$pod" -o "jsonpath={.status.containerStatuses[0].containerID}{'\n'}" | sed -e "s|://| |")
+         if test -n "$found"; then
+            local ref=($found)
+            case "${ref[0]}"
+            in docker) set -x; exec docker exec "${args[@]}" -u root "${ref[1]}" "$@"
+            ;; containerd) set -x; exec runc --root /run/containerd/runc/k8s.io/ exec -u root "${args[@]}" "${ref[1]}" "$@"
+            ;; *) echo "ERROR: unknown CNI $cni" >&2; exit 1
+            ;; esac
+         else
+            echo "ERROR: no container for $pod"
+         fi
+  ;; esac
+  done
+}
+
+get_vols() {
+  if test :-A = ":${namespaces[0]}"; then
+     kubectl get pv -o "jsonpath={range .items[*]}{.spec.claimRef.namespace}/{.spec.claimRef.name} {.metadata.name}{'\n'}{end}"
+     return
+  fi
+  local namespace="${namespaces[1]}"
+  kubectl get pv -o "jsonpath={range .items[*]}{.spec.claimRef.namespace}/{.spec.claimRef.name} {.metadata.name}{'\n'}{end}" | {
+     while read -r claim name; do
+        case "$claim" in "$namespace"/*)
+           echo "$claim" "\t$name" 
+        esac
+     done ; }
+  test -n "$verbose" && echo "# done"
+}
+
+delete_vols() {
+  if test :-A = ":${namespaces[0]}"; then
+     echo "ERROR: can not delete all pv" >&1; exit 1
+  fi
+  local namespace="${namespaces[1]}"
+  kubectl get pv -o "jsonpath={range .items[*]}{.spec.claimRef.namespace}/{.spec.claimRef.name} {.metadata.name}{'\n'}{end}" | {
+     while read -r claim name; do
+         echo "check $namespace/* -> $claim ($name)"
+        case "$claim" in "$namespace"/*)
+           echo kubectl delete pv "$name" 
+                kubectl delete pv "$name" ;;
+        esac
+     done ; }
+  test -n "$verbose" && echo "# done"
+}
+
+ingress_get_ip() {
+   kubectl "${namespaces[@]}" get ingress -o "jsonpath={range .items[*]}{.metadata.name} {.spec.rules[0].host}{'\n'}{end}" | {
+     while read -r service hostname stuff; do
+        # echo "[$service] $hostname"
+        kubectl "${namespaces[@]}" get svc "$service" -o "jsonpath={.metadata.name} {.spec.clusterIP}{'\n'}" | { 
+           while read svc ip stuff; do
+             echo "$ip $hostname"
+           done ; }
+     done ; }
+   test -n "$verbose" && echo "# done"
+}
+
+ingress_update_hosts() {
+   ingress_get_ip | {
+      while read -r ip hostname; do
+         echo sudo sed -i -e "'s|[0-9.][0-9.]*  *$hostname *\$|$ip $hostname|'" /etc/hosts
+              sudo sed -i -e "s|[0-9.][0-9.]*  *$hostname *\$|$ip $hostname|" /etc/hosts
+      done ; }
+   test -n "$verbose" && echo "# done"
+}
+
+########### execute
+case "$command" 
+  in help) tail -20  "$0"
+  ;; evt|events) exec kubectl "$command" "${namespaces[@]}" "$@" --sort-by='.metadata.creationTimestamp'
+  ;; get) case "$1" 
+    in ns)  exec kubectl "$command" "$@" # no namespace
+    ;; api*) exec kubectl api-resources  # no namespace
+    ;; d)  shift; exec kubectl "$command" "${namespaces[@]}" "deploy" "$@"
+    ;; any|all) get_any; exit 0 
+    ;; vol|vols) get_vols; exit 0 
+    ;; events) exec kubectl "$command" "${namespaces[@]}" "$@" --sort-by='.metadata.creationTimestamp'
+    ;; ip) ingress_ip; exit 0
+    ;; con|container) shift; get_container "$@" ; exit 0
+    ;; *)  test -n "$verbose" && set -x; exec kubectl "$command" "${namespaces[@]}" "$@"
+    ;; esac
+  ;; del|delete) case "$1" 
+     in ns) exec kubectl delete "$@" 
+     ;; loc|local) shift; exec kubectl delete ns "local" "$@" ; delete_pvs "local"
+     ;; vol|vols|volume|volumes) shift; delete_vols
+     ;; *) exec kubectl delete "${namespaces[@]}" "$@"
+     ;; esac
+  ;; fin|finalize) case "${1:-ns}"
+     in ns|namespace) finalize_ns; exit 0 
+     ;; pvc|pvcs) finalize_pvc; exit 0 
+     ;; *) echo "need to 'kube finalize ns' / 'kube finalize pvc'"; exit 1
+     ;; esac
+  ;; con|container) get_container "$@" ; exit 0
+  ;; ip) ingress_get_ip ; exit 0
+  ;; ipp|hosts) ingress_update_hosts ; exit 0
+  ;; list) exec helm --kubeconfig=${KUBECONFIG:-$K3S} "$command" "${namespaces[@]}" "$@"
+  ;; repo) exec helm --kubeconfig=${KUBECONFIG:-$K3S} "$command" "$@"
+  ;; chart|search) exec helm --kubeconfig=${KUBECONFIG:-$K3S} "$command" repo "$@"
+  ;; root|exec0|execs) exec_root "$@"
+  ;; helm) case "$1"
+     in version) exec helm --kubeconfig=${KUBECONFIG:-$K3S} "$@"
+     ;; repo|pull|push|search) exec helm --kubeconfig=${KUBECONFIG:-$K3S} "$@"
+     ;; *) command="$1"; shift; exec helm --kubeconfig=${KUBECONFIG:-$K3S} "$command" "${namespaces[@]}" "$@"
+     ;; esac
+  ;; helmfile) export KUBECONFIG=${KUBECONFIG:-$K3S}
+        command="$1"; shift
+        exec helmfile "$command" "${namespaces[@]}" "$@"
+  ;; *) echo "..."; test -n "$verbose" && set -x
+        exec kubectl "$command" "${namespaces[@]}" "$@"
+  ;; esac

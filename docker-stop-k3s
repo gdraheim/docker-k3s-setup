@@ -1,0 +1,4 @@
+#! /bin/bash
+docker ps --filter=name=k8s_POD | sed -e "1d" -e "s/ .*//" | xargs -r docker stop -t 60
+docker ps --filter=name=k8s_ | sed -e "1d" -e "s/ .*//" | xargs -r docker stop
+docker ps --filter=name=k8s_ -a | sed -e "1d" -e "s/ .*//" | xargs -r docker rm -f

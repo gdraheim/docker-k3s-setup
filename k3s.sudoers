@@ -1,0 +1,3 @@
+%docker ALL = (root) NOPASSWD: /sbin/service k3s *
+%docker ALL = (root) NOPASSWD: /usr/bin/systemctl start k3s
+%docker ALL = (root) NOPASSWD: /usr/bin/systemctl stop k3s

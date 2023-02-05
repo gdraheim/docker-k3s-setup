@@ -1,0 +1,30 @@
+# ORIG /usr/lib/systemd/system/k3s-server.service
+[Unit]
+Description=Lightweight Kubernetes
+Documentation=https://k3s.io
+After=network.target
+Conflict=k3s-server.service
+Requires=docker.service
+
+[Service]
+ExecStartPre=-/sbin/modprobe br_netfilter
+ExecStartPre=-/sbin/modprobe overlay
+## The server.conf does not work
+# EnvironmentFile=/etc/rancher/k3s/server.conf
+ExecStart=/usr/bin/k3s server --docker --no-deploy=servicelb --no-deploy=traefik --write-kubeconfig-mode=0640
+ExecStartPost=/bin/chgrp docker /etc/rancher/k3s/k3s.yaml
+ExecStartPost=/bin/chmod 0640 /etc/rancher/k3s/k3s.yaml
+ExecStopPost=/usr/local/bin/docker-stop-k3s
+KillMode=process
+Delegate=yes
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target
+
+# REMEMBER to add ingress-nginx.yaml and metallb-system.yaml into
+#          /var/lib/rancher/k3s/server/manifests/
+# Which are put here: /etc/rancher/manifests2/

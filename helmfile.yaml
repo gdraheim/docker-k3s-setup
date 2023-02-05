@@ -1,0 +1,16 @@
+repositories:
+  - name: kubernetes
+    url: https://kubernetes.github.io/ingress-nginx
+  - name: metallb
+    url: https://metallb.github.io/metallb
+
+release:
+  - name: ingress-nginx
+    namespace: kube-system
+    chart: kubernetes/ingress-nginx
+    set:
+      - name: configInLine.address-pools
+        values:
+          - name: default
+            protocol: layer2
+            addresses: [ "192.168.0.240-192.168.0.250" ]
