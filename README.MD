@@ -14,7 +14,7 @@ it does not kill the docker containers started by k3s. So we have
 added a script docker-stop-k3s which gets called automatically
 via ExecStopPost
 
-# Directly using kubectl as a non-root user
+## Directly using kubectl as a non-root user
 
 When installing kubectl via k3s it has a default KUBECONFIG
 being set to `/etc/rancher/k3s/k3s.yaml`. However the chmod
@@ -30,7 +30,7 @@ But even this is not working all the time, so some ExecStartPost are added
 Additionally, some /etc/sudoers.d/k3s is installed, so that users
 in the "docker" unix group can start/stop k3s containers.
 
-# Using nginx as the frontend for k3s
+## Using nginx as the frontend for k3s
 
 Forget about other how-to ... the real one comes from Suse.
 
@@ -46,7 +46,7 @@ Actually traefik is deployed via its helm chart in k3s, have a look at
 When the no-deploy=traefik is in place, that file is ignored. Instead
 we deploy the ingress-nginx.yaml which comes from that suse ticket.
 
-# Using metallb to expose services
+## Using metallb to expose services
 
 Again, make sure to have added `--no-deploy=servicelb` to "k3s server"
 
@@ -56,7 +56,7 @@ that metallb gets run before nginx. That's why there are two files here:
     manifests/setup-10-metallb-system.yaml
     manifests/setup-20-ingress-nginx.yaml
 
-# Some kube trickts
+## Some kube tricks
 
 There is an additional file `kube` being installed into local/bin
 
