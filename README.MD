@@ -73,3 +73,8 @@ This is a wrapper around kubectl and helm/helmfile plus a few tricks.
 * find and del volumes by namespace ("kube get vol" and "kube del vol")
   - volume is a "pv" but the pv-list is not global anymore
 * shorthand "kube chart" for "kube helm search repo"
+
+## How to install?
+
+    make install
+    # make uninstall
